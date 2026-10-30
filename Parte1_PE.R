@@ -1,82 +1,73 @@
 # ==============================================================================
-# PROYECTO ANÁLISIS ESTADÍSTICO AVANZADO (UC3M) - FASE I
-# SCRIPT COMPLETO: CARGA, LIMPIEZA, ANÁLISIS UNIVARIANTE, BIVARIANTE Y VISUALIZACIÓN
-# Dataset: Ponderaciones del Índice de Precios de Vivienda en Alquiler (INE)
+# PROYECTO ANÁLISIS ESTADÍSTICO AVANZADO (UC3M) - FASE I (SCRIPT DEFINITIVO V4)
+# Dataset: Ponderaciones IPVA (INE - Tabla 50083)
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 0. VERIFICACIÓN E INSTALACIÓN AUTOMÁTICA DE LIBRERÍAS
+# 0. VERIFICACIÓN E INSTALACIÓN DE LIBRERÍAS
 # ------------------------------------------------------------------------------
-paquetes_requeridos <- c("readxl", "dplyr", "stringr", "ggplot2", "e1071", "patchwork")
-paquetes_faltantes <- paquetes_requeridos[!(paquetes_requeridos %in% installed.packages()[, "Package"])]
-
-if (length(paquetes_faltantes) > 0) {
-  message("Instalando paquetes faltantes: ", paste(paquetes_faltantes, collapse = ", "))
-  install.packages(paquetes_faltantes)
-}
+paquetes <- c("readxl", "dplyr", "stringr", "ggplot2", "e1071", "patchwork", 
+              "janitor", "naniar", "car", "gt", "tidyr")
+paquetes_faltantes <- paquetes[!(paquetes %in% installed.packages()[, "Package"])]
+if (length(paquetes_faltantes) > 0) install.packages(paquetes_faltantes)
 
 library(readxl)
 library(dplyr)
 library(stringr)
 library(ggplot2)
-library(e1071)     # Para coeficientes de asimetría y curtosis de Fisher
-library(patchwork) # Para composición profesional de gráficos
+library(e1071)
+library(patchwork)
+library(janitor)
+library(naniar)
+library(car)
+library(gt)
+library(tidyr)
 
 # ------------------------------------------------------------------------------
-# 1. CARGA DE DATOS Y LIMPIEZA INICIAL DE METADATOS
+# 1. CARGA DE DATOS Y RUTA RELATIVA (REPRODUCIBILIDAD)
 # ------------------------------------------------------------------------------
-ruta_archivo <- file.choose()
+# Se utiliza ruta relativa dentro del proyecto RStudio
+ruta_datos <- "datos/50083.xlsx"
 
-datos_raw <- read_excel(
-  path = ruta_archivo,
-  skip = 6,
-  n_max = 765
-)
+if (!file.exists(ruta_datos)) {
+  # Fallback si no está en la carpeta local
+  message("Advertencia: No se encontró 'datos/50083.xlsx'. Seleccione el archivo manualmente:")
+  ruta_datos <- file.choose()
+}
 
+datos_raw <- read_excel(path = ruta_datos, skip = 6, n_max = 765)
 colnames(datos_raw)[1] <- "municipio_raw"
-
-# Renombrar columnas de años con el prefijo 'peso_' para fijar la unidad (‰) y evitar comillas invertidas
-datos_raw <- datos_raw %>%
-  rename_with(~ paste0("peso_", .x), matches("^(19|20)\\d{2}$"))
+datos_raw <- datos_raw %>% rename_with(~ paste0("peso_", .x), matches("^(19|20)\\d{2}$"))
 
 # ------------------------------------------------------------------------------
-# 2. MAPEO TERRITORIAL (48 PROVINCIAS / CIUDADES AUTÓNOMAS DE TERRITORIO COMÚN)
+# 2. MAPEO TERRITORIAL Y WRANGLING
 # ------------------------------------------------------------------------------
 mapa_territorial <- data.frame(
-  cod_prov = c(
-    "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15",
-    "16", "17", "18", "19", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30",
-    "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45",
-    "46", "47", "49", "50", "51", "52"
-  ),
-  provincia = c(
-    "Albacete", "Alicante/Alacant", "Almería", "Ávila", "Badajoz", "Balears, Illes",
-    "Barcelona", "Burgos", "Cáceres", "Cádiz", "Castellón/Castelló", "Ciudad Real",
-    "Córdoba", "A Coruña", "Cuenca", "Girona", "Granada", "Guadalajara", "Huelva",
-    "Huesca", "Jaén", "León", "Lleida", "La Rioja", "Lugo", "Madrid", "Málaga",
-    "Murcia", "Ourense", "Asturias", "Palencia", "Las Palmas", "Pontevedra",
-    "Salamanca", "Santa Cruz de Tenerife", "Cantabria", "Segovia", "Sevilla",
-    "Soria", "Tarragona", "Teruel", "Toledo", "Valencia/València", "Valladolid",
-    "Zamora", "Zaragoza", "Ceuta", "Melilla"
-  ),
-  ccaa = c(
-    "Castilla-La Mancha", "Comunitat Valenciana", "Andalucía", "Castilla y León",
-    "Extremadura", "Illes Balears", "Cataluña", "Castilla y León", "Extremadura",
-    "Andalucía", "Comunitat Valenciana", "Castilla-La Mancha", "Andalucía", "Galicia",
-    "Castilla-La Mancha", "Cataluña", "Andalucía", "Castilla-La Mancha", "Andalucía",
-    "Aragón", "Andalucía", "Castilla y León", "Cataluña", "La Rioja", "Galicia",
-    "Comunidad de Madrid", "Andalucía", "Región de Murcia", "Galicia", "Principado de Asturias",
-    "Castilla y León", "Canarias", "Galicia", "Castilla y León", "Canarias",
-    "Cantabria", "Castilla y León", "Andalucía", "Castilla y León", "Cataluña",
-    "Aragón", "Castilla-La Mancha", "Comunitat Valenciana", "Castilla y León",
-    "Castilla y León", "Aragón", "Ceuta", "Melilla"
-  ),
+  cod_prov = c("02","03","04","05","06","07","08","09","10","11","12","13","14","15",
+               "16","17","18","19","21","22","23","24","25","26","27","28","29","30",
+               "32","33","34","35","36","37","38","39","40","41","42","43","44","45",
+               "46","47","49","50","51","52"),
+  provincia = c("Albacete","Alicante/Alacant","Almería","Ávila","Badajoz","Balears, Illes",
+                "Barcelona","Burgos","Cáceres","Cádiz","Castellón/Castelló","Ciudad Real",
+                "Córdoba","A Coruña","Cuenca","Girona","Granada","Guadalajara","Huelva",
+                "Huesca","Jaén","León","Lleida","La Rioja","Lugo","Madrid","Málaga",
+                "Murcia","Ourense","Asturias","Palencia","Las Palmas","Pontevedra",
+                "Salamanca","Santa Cruz de Tenerife","Cantabria","Segovia","Sevilla",
+                "Soria","Tarragona","Teruel","Toledo","Valencia/València","Valladolid",
+                "Zamora","Zaragoza","Ceuta","Melilla"),
+  ccaa = c("Castilla-La Mancha","Comunitat Valenciana","Andalucía","Castilla y León",
+           "Extremadura","Illes Balears","Cataluña","Castilla y León","Extremadura",
+           "Andalucía","Comunitat Valenciana","Castilla-La Mancha","Andalucía","Galicia",
+           "Castilla-La Mancha","Cataluña","Andalucía","Castilla-La Mancha","Andalucía",
+           "Aragón","Andalucía","Castilla y León","Cataluña","La Rioja","Galicia",
+           "Comunidad de Madrid","Andalucía","Región de Murcia","Galicia","Principado de Asturias",
+           "Castilla y León","Canarias","Galicia","Castilla y León","Canarias",
+           "Cantabria","Castilla y León","Andalucía","Castilla y León","Cataluña",
+           "Aragón","Castilla-La Mancha","Comunitat Valenciana","Castilla y León",
+           "Castilla y León","Aragón","Ceuta","Melilla"),
   stringsAsFactors = FALSE
 )
 
-# ------------------------------------------------------------------------------
-# 3. TRANSFORMACIÓN E INGENIERÍA DE VARIABLES (DATA WRANGLING)
-# ------------------------------------------------------------------------------
 datos_limpios <- datos_raw %>%
   mutate(
     municipio_raw = str_trim(municipio_raw),
@@ -90,156 +81,137 @@ datos_limpios <- datos_raw %>%
     cod_prov = str_sub(cod_ine, 1, 2)
   ) %>%
   left_join(mapa_territorial, by = "cod_prov") %>%
-  mutate(
-    provincia = ifelse(tipo_entidad == "Agregado Provincial", str_replace(nombre_municipio, "Resto ", ""), provincia)
-  ) %>%
-  select(
-    cod_ine, nombre_municipio, tipo_entidad, provincia, ccaa,
-    starts_with("peso_")
-  )
+  select(cod_ine, nombre_municipio, tipo_entidad, provincia, ccaa, starts_with("peso_"))
 
-# Filtrar submuestra de trabajo: Municipios de >10.000 habitantes
 df_municipios <- datos_limpios %>%
   filter(tipo_entidad == "Municipio >10k") %>%
   mutate(across(starts_with("peso_"), ~ as.numeric(as.character(.x))))
 
 # ------------------------------------------------------------------------------
-# 4. ANÁLISIS UNIVARIANTE: ESTADÍSTICOS DESCRIPTIVOS (2012 vs 2024)
+# 3. VERIFICACIÓN DE CALIDAD DE DATOS (PUNTO CRÍTICO 1)
 # ------------------------------------------------------------------------------
-calcular_descriptivos <- function(vector_datos, nombre_variable) {
-  datos_val = vector_datos[!is.na(vector_datos)]
-  
-  q1 <- quantile(datos_val, 0.25)
-  q3 <- quantile(datos_val, 0.75)
-  iqr_val <- q3 - q1
-  media_val <- mean(datos_val)
-  sd_val <- sd(datos_val)
-  
-  data.frame(
-    Variable = nombre_variable,
-    N_validos = length(datos_val),
-    Media = round(media_val, 4),
-    Mediana = round(median(datos_val), 4),
-    Desv_Tipica = round(sd_val, 4),
-    CV_Porc = round((sd_val / media_val) * 100, 2),
-    Minimo = round(min(datos_val), 4),
-    Q1 = round(q1, 4),
-    Q3 = round(q3, 4),
-    Maximo = round(max(datos_val), 4),
-    IQR = round(iqr_val, 4),
-    Asimetria_Fisher = round(skewness(datos_val), 4),
-    Curtosis_Fisher = round(kurtosis(datos_val), 4)
-  )
-}
+cat("--- AUDITORÍA DE DUPLICADOS ---\n")
+duplicados <- df_municipios %>% janitor::get_dupes(cod_ine)
+cat("Número de registros duplicados detectados por código INE:", nrow(duplicados), "\n\n")
 
-tabla_univariante <- rbind(
-  calcular_descriptivos(df_municipios$peso_2024, "Ponderación IPVA 2024 (‰)"),
-  calcular_descriptivos(df_municipios$peso_2012, "Ponderación IPVA 2012 (‰)")
-)
+cat("--- AUDITORÍA DE VALORES AUSENTES (NA) ---\n")
+na_conteo <- colSums(is.na(df_municipios %>% select(starts_with("peso_"))))
+print(na_conteo)
 
-cat("====================================================\n")
-cat("2. TABLA DE ESTADÍSTICOS DESCRIPTIVOS UNIVARIANTES\n")
-cat("====================================================\n")
-print(tabla_univariante)
+# Submuestra pareada para comparaciones homogéneas (N=700)
+df_paired <- df_municipios %>% filter(!is.na(peso_2012) & !is.na(peso_2024))
 
 # ------------------------------------------------------------------------------
-# 5. DETECCIÓN DE VALORES ATÍPICOS (OUTLIERS) - REGLA 1.5 x IQR
+# 4. TUKEY EN ESCALA NATURAL VS LOGARÍTMICA (PUNTO IMPORTANTE 11)
 # ------------------------------------------------------------------------------
-q1_24 <- quantile(df_municipios$peso_2024, 0.25, na.rm = TRUE)
-q3_24 <- quantile(df_municipios$peso_2024, 0.75, na.rm = TRUE)
-iqr_24 <- q3_24 - q1_24
-limite_superior_24 <- q3_24 + 1.5 * iqr_24
+# Escala original
+q1_raw <- quantile(df_municipios$peso_2024, 0.25, na.rm = TRUE)
+q3_raw <- quantile(df_municipios$peso_2024, 0.75, na.rm = TRUE)
+iqr_raw <- q3_raw - q1_raw
+cutoff_raw <- q3_raw + 1.5 * iqr_raw
+outliers_raw <- sum(df_municipios$peso_2024 > cutoff_raw, na.rm = TRUE)
 
-outliers_2024 <- df_municipios %>%
-  filter(peso_2024 > limite_superior_24) %>%
-  select(cod_ine, nombre_municipio, provincia, ccaa, peso_2024) %>%
-  arrange(desc(peso_2024))
+# Escala Log10
+log_peso24 <- log10(df_municipios$peso_2024)
+q1_log <- quantile(log_peso24, 0.25, na.rm = TRUE)
+q3_log <- quantile(log_peso24, 0.75, na.rm = TRUE)
+iqr_log <- q3_log - q1_log
+cutoff_log_sup <- q3_log + 1.5 * iqr_log
+cutoff_log_inf <- q1_log - 1.5 * iqr_log
+outliers_log <- sum(log_peso24 > cutoff_log_sup | log_peso24 < cutoff_log_inf, na.rm = TRUE)
 
-cat("\n====================================================\n")
-cat("3. DIAGNÓSTICO DE VALORES ATÍPICOS (EJERCICIO 2024)\n")
-cat("====================================================\n")
-cat("Límite superior atípicos (Q3 + 1.5*IQR):", round(limite_superior_24, 4), "‰\n")
-cat("Número total de municipios atípicos:", nrow(outliers_2024), "\n\n")
-cat("Top 10 observaciones más extremas (grandes ciudades):\n")
-print(head(outliers_2024, 10))
-
-# ------------------------------------------------------------------------------
-# 6. ANÁLISIS BIVARIANTE Y MODELO DE REGRESIÓN LINEAL SIMPLE (MCO)
-# ------------------------------------------------------------------------------
-df_bivariante <- df_municipios %>%
-  filter(!is.na(peso_2012), !is.na(peso_2024))
-
-correlacion_pearson <- cor(df_bivariante$peso_2012, df_bivariante$peso_2024, method = "pearson")
-covarianza_val <- cov(df_bivariante$peso_2012, df_bivariante$peso_2024)
-
-modelo_mco <- lm(peso_2024 ~ peso_2012, data = df_bivariante)
-summary_mco <- summary(modelo_mco)
-
-cat("\n====================================================\n")
-cat("4. RESULTADOS BIVARIANTES Y REGRESIÓN LINEAL (2012 vs 2024)\n")
-cat("====================================================\n")
-cat("Número de municipios pareados (N):", nrow(df_bivariante), "\n")
-cat("Covarianza Muestral (Sxy):", round(covarianza_val, 4), "\n")
-cat("Coeficiente de Correlación de Pearson (r):", round(correlacion_pearson, 4), "\n")
-cat("Coeficiente de Determinación (R^2):", round(summary_mco$r.squared, 4), "\n\n")
-cat("Ecuación MCO ajustada: peso_2024 = beta0 + beta1 * peso_2012\n")
-cat("  Intercepto (beta0):", round(coef(modelo_mco)[1], 4), "\n")
-cat("  Pendiente  (beta1):", round(coef(modelo_mco)[2], 4), "\n")
+cat("\n--- DIAGNÓSTICO DE ATÍPICOS (TUKEY) ---\n")
+cat("Atípicos en escala original (cola de asimetría):", outliers_raw, "(", round(outliers_raw/7.16, 2), "%)\n")
+cat("Atípicos en escala Log10 (tras corregir asimetría):", outliers_log, "(", round(outliers_log/7.16, 2), "%)\n")
 
 # ------------------------------------------------------------------------------
-# 7. GENERACIÓN, DIBUJO EN PANTALLA Y EXPORTACIÓN A DISCO DE FIGURAS
+# 5. ANÁLISIS BIVARIANTE Y MODELIZACIÓN LOG-LOG (PUNTOS CRÍTICOS 2 Y 3)
 # ------------------------------------------------------------------------------
-# Figura 1A: Histograma Logarítmico
+# Correlaciones
+r_pearson <- cor(df_paired$peso_2012, df_paired$peso_2024, method = "pearson")
+r_spearman <- cor(df_paired$peso_2012, df_paired$peso_2024, method = "spearman")
+
+# Modelo lineal en escala original
+mco_raw <- lm(peso_2024 ~ peso_2012, data = df_paired)
+
+# Modelo Log-Log
+mco_log <- lm(log(peso_2024) ~ log(peso_2012), data = df_paired)
+summary_log <- summary(mco_log)
+
+# Contraste de Hipótesis: H0: beta1 = 1 (Elasticidad unitaria)
+test_beta1 <- car::linearHypothesis(mco_log, "log(peso_2012) = 1")
+
+# Distancia de Cook (Influencia de Madrid y Barcelona)
+df_paired$cookd <- cooks.distance(mco_raw)
+top_cook <- df_paired %>% select(nombre_municipio, peso_2012, peso_2024, cookd) %>% arrange(desc(cookd)) %>% head(5)
+
+cat("\n--- RESULTADOS BIVARIANTES ROBUSTOS ---\n")
+cat("Correlación de Pearson (sensible a outliers):", round(r_pearson, 4), "\n")
+cat("Correlación de Spearman (robusta a asimetría):", round(r_spearman, 4), "\n")
+cat("R^2 Modelo Log-Log:", round(summary_log$r.squared, 4), "\n")
+cat("Pendiente estimada Log-Log (Elasticidad):", round(coef(mco_log)[2], 4), "\n")
+cat("p-value Contraste H0: Beta1 = 1:", test_beta1$`Pr(>F)`[2], "\n")
+
+# ------------------------------------------------------------------------------
+# 6. ANÁLISIS POR CCAA Y SERIE TEMPORAL (PUNTOS IMPORTANTES 8 Y 9)
+# ------------------------------------------------------------------------------
+# Frecuencias por CCAA
+tabla_ccaa <- df_municipios %>% count(ccaa) %>% arrange(desc(n))
+
+# Kruskal-Wallis (diferencias de distribución entre CCAA)
+kw_test <- kruskal.test(peso_2024 ~ ccaa, data = df_municipios)
+
+# Serie temporal Top 10 municipios (2012-2024)
+top10_muni <- df_municipios %>% arrange(desc(peso_2024)) %>% head(10) %>% pull(cod_ine)
+
+df_long <- df_municipios %>%
+  filter(cod_ine %in% top10_muni) %>%
+  pivot_longer(cols = starts_with("peso_"), names_to = "anio", values_to = "peso") %>%
+  mutate(anio = as.numeric(str_replace(anio, "peso_", "")))
+
+# ------------------------------------------------------------------------------
+# 7. GENERACIÓN Y EXPORTACIÓN DE FIGURAS
+# ------------------------------------------------------------------------------
+# Figura 1: Histograma Log10 y Boxplot
 g_hist <- ggplot(df_municipios %>% filter(!is.na(peso_2024)), aes(x = peso_2024)) +
-  geom_histogram(aes(y = ..density..), bins = 35, fill = "#2b5c8f", color = "white", alpha = 0.8) +
+  geom_histogram(aes(y = after_stat(density)), bins = 35, fill = "#002060", color = "white", alpha = 0.8) +
   geom_density(color = "#e74c3c", linewidth = 1) +
   scale_x_log10() +
   theme_minimal(base_size = 11) +
-  labs(
-    title = "A. Distribución de Ponderaciones (Escala Log10)",
-    subtitle = "Histograma y densidad estimada para 2024",
-    x = "Ponderación IPVA 2024 en ‰ (Escala log10)",
-    y = "Densidad"
-  )
+  labs(title = "A. Distribución en Escala Log10 (2024)", x = "Ponderación IPVA (‰, log10)", y = "Densidad")
 
-# Figura 1B: Boxplot con Media (Rombo rojo)
 g_box <- ggplot(df_municipios %>% filter(!is.na(peso_2024)), aes(y = peso_2024, x = "")) +
-  geom_boxplot(fill = "#d4e6f1", color = "#1b4f72", outlier.color = "#c0392b", outlier.alpha = 0.5) +
+  geom_boxplot(fill = "#d4e6f1", color = "#002060", outlier.color = "#c0392b", outlier.alpha = 0.5) +
   stat_summary(fun = mean, geom = "point", shape = 18, size = 3.5, color = "red") +
   coord_cartesian(ylim = c(0, 4)) +
   theme_minimal(base_size = 11) +
-  labs(
-    title = "B. Boxplot IPVA 2024 (Detalle Rango 0-4‰)",
-    subtitle = "El rombo rojo indica la Media (1.2931‰)",
-    y = "Ponderación IPVA 2024 (‰)",
-    x = ""
-  )
+  labs(title = "B. Detalle Rango 0-4‰ (Media en rojo)", y = "Ponderación IPVA (‰)", x = "")
 
-# Combinar, GUARDAR en disco y MOSTRAR en la pestaña Plots de RStudio
-figura1_univariante <- g_hist + g_box
-ggsave("figura1_univariante.png", figura1_univariante, width = 10, height = 4.5, dpi = 300) # Descarga en disco
-print(figura1_univariante) # Representación interactiva en RStudio
+figura1 <- g_hist + g_box
+ggsave("figura1_univariante.png", figura1, width = 10, height = 4.5, dpi = 300)
 
-# Figura 2: Diagrama de Dispersión y Regresión Lineal MCO
-df_sub_grafico <- df_bivariante %>% filter(peso_2024 < 20)
-
-figura2_regresion <- ggplot(df_sub_grafico, aes(x = peso_2012, y = peso_2024)) +
+# Figura 2: Regresión en Escala Log-Log (Solución a sesgos)
+figura2 <- ggplot(df_paired, aes(x = log(peso_2012), y = log(peso_2024))) +
   geom_point(color = "#34495e", alpha = 0.5, size = 1.8) +
   geom_smooth(method = "lm", color = "#27ae60", se = TRUE, fill = "#27ae60", alpha = 0.2) +
   theme_minimal(base_size = 11) +
   labs(
-    title = "Relación Lineal entre Ponderación IPVA 2012 y 2024",
-    subtitle = "Ajuste por Mínimos Cuadrados Ordinarios (MCO) con IC del 95% | R² = 0.9911",
-    x = "Ponderación IPVA 2012 (‰)",
-    y = "Ponderación IPVA 2024 (‰)"
+    title = "Ajuste Log-Log entre Ponderaciones 2012 y 2024",
+    subtitle = paste0("Modelo Log-Log | R² = ", round(summary_log$r.squared, 4), 
+                      " | Spearman r = ", round(r_spearman, 4)),
+    x = "log(Ponderación 2012)", y = "log(Ponderación 2024)"
   )
+ggsave("figura2_regresion.png", figura2, width = 7.5, height = 5, dpi = 300)
 
-# GUARDAR en disco y MOSTRAR en la pestaña Plots de RStudio
-ggsave("figura2_regresion.png", figura2_regresion, width = 7.5, height = 5, dpi = 300) # Descarga en disco
-print(figura2_regresion) # Representación interactiva en RStudio
+# Figura 3 (NUEVA): Serie Temporal Top 10 Municipios (2012-2024)
+figura3_serie <- ggplot(df_long, aes(x = anio, y = peso, color = nombre_municipio)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  theme_minimal(base_size = 11) +
+  labs(title = "Evolución Temporal del Peso Muestral (Top 10 Municipios)",
+       x = "Año", y = "Ponderación IPVA (‰)", color = "Municipio")
+ggsave("figura3_serietemporal.png", figura3_serie, width = 8.5, height = 5, dpi = 300)
 
 cat("\n====================================================\n")
-cat("EJECUCIÓN COMPLETADA EXITOSAMENTE:\n")
-cat("  1. Gráficos representados en el panel 'Plots' de RStudio.\n")
-cat("  2. Archivos PNG descargados en alta resolución (300 DPI) para el informe PDF.\n")
+cat("EJECUCIÓN COMPLETADA CON ÉXITO\n")
 cat("====================================================\n")
